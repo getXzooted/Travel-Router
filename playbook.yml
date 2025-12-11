@@ -12,8 +12,7 @@
       hostname:
         name: "{{ hostname }}"
     
-    # FIX: Ensure hostname is resolvable (Stops the sudo error)
-    - name: Update /etc/hosts
+    - name: Update /etc/hosts (Fixes sudo error)
       lineinfile:
         path: /etc/hosts
         regexp: '^127\.0\.1\.1'
@@ -38,31 +37,37 @@
       notify: Apply Sysctl
 
     # --- 2. THE SAFETY NET (FIREWALL) ---
-    - name: Create Safety Net Script
+    - name: Install iptables
+      apt:
+        name: iptables
+        state: present
+        update_cache: yes
+
+    - name: Create Safety Net Script (Fixed Paths)
       copy:
         dest: /usr/local/bin/safety-net.sh
         mode: '0755'
         content: |
           #!/bin/bash
-          # CLEAR OLD RULES to prevent duplicates
-          iptables -D OUTPUT -o wlan0 -j REJECT 2>/dev/null
-          iptables -D OUTPUT -o eth0 -j REJECT 2>/dev/null
+          IPT="/usr/sbin/iptables"
+          
+          # CLEAR OLD RULES
+          $IPT -D OUTPUT -o wlan0 -j REJECT 2>/dev/null
+          $IPT -D OUTPUT -o eth0 -j REJECT 2>/dev/null
           
           # 1. BLOCK ALL OUTGOING TRAFFIC (Default)
-          # We add this to the BOTTOM (-A) so exceptions above it work.
-          iptables -A OUTPUT -o wlan0 -j REJECT
-          iptables -A OUTPUT -o eth0 -j REJECT
+          $IPT -A OUTPUT -o wlan0 -j REJECT
+          $IPT -A OUTPUT -o eth0 -j REJECT
           
           # 2. ALLOW VPN CONNECTION (The only way out)
-          iptables -I OUTPUT -d {{ vpn_endpoint }} -p udp --dport {{ vpn_port }} -j ACCEPT
+          $IPT -I OUTPUT -d {{ vpn_endpoint }} -p udp --dport {{ vpn_port }} -j ACCEPT
           
           # 3. ALLOW DHCP & LAN (So you can connect to it)
-          iptables -I OUTPUT -p udp --sport 67 --dport 68 -j ACCEPT
-          iptables -I OUTPUT -d 192.168.0.0/16 -j ACCEPT
-          iptables -I OUTPUT -d 10.0.0.0/8 -j ACCEPT
-          iptables -I OUTPUT -d 172.16.0.0/12 -j ACCEPT
+          $IPT -I OUTPUT -p udp --sport 67 --dport 68 -j ACCEPT
+          $IPT -I OUTPUT -d 192.168.0.0/16 -j ACCEPT
+          $IPT -I OUTPUT -d 10.0.0.0/8 -j ACCEPT
+          $IPT -I OUTPUT -d 172.16.0.0/12 -j ACCEPT
 
-    # [NEW] Install as a Systemd Service (Replaces rc.local)
     - name: Create Safety Net Service
       copy:
         dest: /etc/systemd/system/safety-net.service
@@ -84,6 +89,7 @@
         name: safety-net
         enabled: yes
         state: started
+        daemon_reload: yes
 
     # --- 3. WIREGUARD SETUP ---
     - name: Install WireGuard
@@ -100,7 +106,7 @@
       set_fact:
         final_private_key: "{{ gen_key.stdout if client_private_key | length == 0 else client_private_key }}"
 
-    - name: Create WireGuard Config (Clean)
+    - name: Create WireGuard Config
       template:
         src: templates/wg0.conf.j2
         dest: /etc/wireguard/wg0.conf
@@ -116,10 +122,6 @@
     - name: Install RaspAP
       shell: curl -sL https://install.raspap.com | bash -s -- -y
       when: not raspap_check.stat.exists
-    
-    # --- 5. IMMEDIATE LOCKDOWN ---
-    - name: Apply Safety Net Immediately
-      command: /usr/local/bin/safety-net.sh
 
   handlers:
     - name: Apply Sysctl
@@ -133,4 +135,4 @@
   post_tasks:
     - name: FINAL SUMMARY
       debug:
-        msg: "SETUP COMPLETE. Safety Net Installed via Systemd."
+        msg: "SETUP COMPLETE. Full paths applied to Safety Net."
