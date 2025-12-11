@@ -2,34 +2,11 @@
 Address = {{ client_ip }}/24
 PrivateKey = {{ final_private_key }}
 DNS = {{ dns_server }}
-FwMark = 0x55
+MTU = 1280
 
-# --- FIREWALL & ROUTING ---
-
-# 1. KILL SWITCH (The Baseline Block)
-#    We add this first so it sits at the bottom of the stack. 
-#    Any traffic not matched by the "Allows" below will hit this and be rejected.
-PostUp = iptables -I OUTPUT ! -o %i -m mark ! --mark $(wg show %i fwmark) -m addrtype ! --dst-type LOCAL -j REJECT
-PreDown = iptables -D OUTPUT ! -o %i -m mark ! --mark $(wg show %i fwmark) -m addrtype ! --dst-type LOCAL -j REJECT
-
-# 2. ALLOW DHCP (Fixes "Could not get IP")
-#    Allows the Pi to reply to your phone/laptop when they ask for an IP address.
-PostUp = iptables -I OUTPUT -p udp --sport 67 --dport 68 -j ACCEPT
-PreDown = iptables -D OUTPUT -p udp --sport 67 --dport 68 -j ACCEPT
-
-# 3. ALLOW LOCAL LAN (Fixes "Browser won't open")
-#    Allows you to access the RaspAP Dashboard (10.3.141.1) and hotel login pages.
-#    We add these last so they sit at the VERY TOP of the firewall rules.
-PostUp = iptables -I OUTPUT -d 192.168.0.0/16 -j ACCEPT
-PostUp = iptables -I OUTPUT -d 10.0.0.0/8 -j ACCEPT
-PostUp = iptables -I OUTPUT -d 172.16.0.0/12 -j ACCEPT
-PreDown = iptables -D OUTPUT -d 192.168.0.0/16 -j ACCEPT
-PreDown = iptables -D OUTPUT -d 10.0.0.0/8 -j ACCEPT
-PreDown = iptables -D OUTPUT -d 172.16.0.0/12 -j ACCEPT
-
-# 4. NAT MASQUERADE (Internet Sharing)
-PostUp = iptables -t nat -A POSTROUTING -o wg0 -j MASQUERADE
-PreDown = iptables -t nat -D POSTROUTING -o wg0 -j MASQUERADE
+# NOTE: Firewall rules are now managed by iptables-persistent 
+# located at /etc/iptables/rules.v4. 
+# This file only handles the Routing inside the tunnel.
 
 [Peer]
 PublicKey = {{ vpn_server_pubkey }}
