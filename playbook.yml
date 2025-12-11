@@ -12,6 +12,7 @@
       hostname:
         name: "{{ hostname }}"
     
+    # FIX: Ensure hostname is resolvable (Stops the sudo error)
     - name: Update /etc/hosts
       lineinfile:
         path: /etc/hosts
@@ -36,7 +37,7 @@
           net.ipv4.conf.all.log_martians=1
       notify: Apply Sysctl
 
-    # --- 2. THE SAFETY NET (NEW KILL SWITCH) ---
+    # --- 2. THE SAFETY NET (FIREWALL) ---
     - name: Create Safety Net Script
       copy:
         dest: /usr/local/bin/safety-net.sh
@@ -45,14 +46,14 @@
           #!/bin/bash
           # CLEAR OLD RULES to prevent duplicates
           iptables -D OUTPUT -o wlan0 -j REJECT 2>/dev/null
+          iptables -D OUTPUT -o eth0 -j REJECT 2>/dev/null
           
-          # 1. BLOCK ALL OUTGOING TRAFFIC on Physical WiFi (Default)
+          # 1. BLOCK ALL OUTGOING TRAFFIC (Default)
           # We add this to the BOTTOM (-A) so exceptions above it work.
           iptables -A OUTPUT -o wlan0 -j REJECT
           iptables -A OUTPUT -o eth0 -j REJECT
           
           # 2. ALLOW VPN CONNECTION (The only way out)
-          # We Insert (-I) this at the TOP.
           iptables -I OUTPUT -d {{ vpn_endpoint }} -p udp --dport {{ vpn_port }} -j ACCEPT
           
           # 3. ALLOW DHCP & LAN (So you can connect to it)
@@ -61,11 +62,28 @@
           iptables -I OUTPUT -d 10.0.0.0/8 -j ACCEPT
           iptables -I OUTPUT -d 172.16.0.0/12 -j ACCEPT
 
-    - name: Enable Safety Net on Boot (via rc.local)
-      lineinfile:
-        path: /etc/rc.local
-        insertbefore: '^exit 0'
-        line: '/usr/local/bin/safety-net.sh'
+    # [NEW] Install as a Systemd Service (Replaces rc.local)
+    - name: Create Safety Net Service
+      copy:
+        dest: /etc/systemd/system/safety-net.service
+        content: |
+          [Unit]
+          Description=Safety Net Firewall Rules
+          After=network.target
+
+          [Service]
+          Type=oneshot
+          ExecStart=/usr/local/bin/safety-net.sh
+          RemainAfterExit=yes
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Enable Safety Net Service
+      systemd:
+        name: safety-net
+        enabled: yes
+        state: started
 
     # --- 3. WIREGUARD SETUP ---
     - name: Install WireGuard
@@ -115,4 +133,4 @@
   post_tasks:
     - name: FINAL SUMMARY
       debug:
-        msg: "SETUP COMPLETE. Safety Net Installed."
+        msg: "SETUP COMPLETE. Safety Net Installed via Systemd."
