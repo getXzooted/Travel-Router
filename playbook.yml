@@ -36,7 +36,50 @@
           net.ipv4.conf.all.log_martians=1
       notify: Apply Sysctl
 
-    # --- 2. THE SAFETY NET (FIREWALL) ---
+
+    # --- 2. WIREGUARD SETUP ---
+    - name: Install WireGuard
+      apt:
+        name: wireguard
+        state: present
+
+    - name: Generate Private Key
+      shell: wg genkey
+      register: gen_key
+      when: client_private_key | length == 0
+
+    - name: Define Private Key Variable
+      set_fact:
+        final_private_key: "{{ gen_key.stdout if client_private_key | length == 0 else client_private_key }}"
+
+    - name: Create WireGuard Config
+      template:
+        src: templates/wg0.conf.j2
+        dest: /etc/wireguard/wg0.conf
+        mode: '0600'
+      notify: Restart WireGuard
+
+    # --- 3. RASPAP SETUP ---
+    - name: Check RaspAP
+      stat:
+        path: /etc/raspap
+      register: raspap_check
+
+    - name: Install RaspAP
+      shell: curl -sL https://install.raspap.com | bash -s -- -y
+      when: not raspap_check.stat.exists
+
+  handlers:
+    - name: Apply Sysctl
+      command: sysctl -p /etc/sysctl.d/99-hardening.conf
+
+    - name: Restart WireGuard
+      service:
+        name: wg-quick@wg0
+        state: restarted
+
+
+    # --- 4. THE SAFETY NET (FIREWALL) ---
     - name: Install iptables
       apt:
         name: iptables
@@ -90,47 +133,6 @@
         enabled: yes
         state: started
         daemon_reload: yes
-
-    # --- 3. WIREGUARD SETUP ---
-    - name: Install WireGuard
-      apt:
-        name: wireguard
-        state: present
-
-    - name: Generate Private Key
-      shell: wg genkey
-      register: gen_key
-      when: client_private_key | length == 0
-
-    - name: Define Private Key Variable
-      set_fact:
-        final_private_key: "{{ gen_key.stdout if client_private_key | length == 0 else client_private_key }}"
-
-    - name: Create WireGuard Config
-      template:
-        src: templates/wg0.conf.j2
-        dest: /etc/wireguard/wg0.conf
-        mode: '0600'
-      notify: Restart WireGuard
-
-    # --- 4. RASPAP SETUP ---
-    - name: Check RaspAP
-      stat:
-        path: /etc/raspap
-      register: raspap_check
-
-    - name: Install RaspAP
-      shell: curl -sL https://install.raspap.com | bash -s -- -y
-      when: not raspap_check.stat.exists
-
-  handlers:
-    - name: Apply Sysctl
-      command: sysctl -p /etc/sysctl.d/99-hardening.conf
-
-    - name: Restart WireGuard
-      service:
-        name: wg-quick@wg0
-        state: restarted
 
   post_tasks:
     - name: FINAL SUMMARY
