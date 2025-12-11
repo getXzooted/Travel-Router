@@ -1,6 +1,7 @@
-git clone https://github.com/your-repo/secure-gateway.git
-cd secure-gateway
+git clone https://github.com/getxzooted/travel-router.git
+cd Travel-Router
 chmod +x setup.sh
+sudo setup.sh
 
 
 Service,Username,Password
