@@ -4,7 +4,7 @@ PrivateKey = {{ final_private_key }}
 DNS = {{ dns_server }}
 MTU = 1280
 
-# NAT MASQUERADE (Allows internet sharing)
+# NAT MASQUERADE (Internet Sharing)
 PostUp = iptables -t nat -A POSTROUTING -o wg0 -j MASQUERADE
 PreDown = iptables -t nat -D POSTROUTING -o wg0 -j MASQUERADE
 
@@ -13,4 +13,3 @@ PublicKey = {{ vpn_server_pubkey }}
 Endpoint = {{ vpn_endpoint }}:{{ vpn_port }}
 AllowedIPs = 0.0.0.0/0
 PersistentKeepalive = 25
-
