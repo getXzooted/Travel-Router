@@ -12,7 +12,6 @@
       hostname:
         name: "{{ hostname }}"
     
-    # [NEW] Fix the "unable to resolve host" error
     - name: Update /etc/hosts for sudo resolution
       lineinfile:
         path: /etc/hosts
@@ -37,12 +36,68 @@
           net.ipv4.conf.all.log_martians=1
       notify: Apply Sysctl
 
-    # --- 2. WIREGUARD SETUP ---
+    # --- 2. PERMANENT FIREWALL (THE LEAK FIX) ---
+    - name: Install iptables-persistent
+      apt:
+        name: iptables-persistent
+        state: present
+        update_cache: yes
+
+    - name: Write Permanent Firewall Rules (rules.v4)
+      copy:
+        dest: /etc/iptables/rules.v4
+        content: |
+          *filter
+          :INPUT DROP [0:0]
+          :FORWARD DROP [0:0]
+          :OUTPUT DROP [0:0]
+          
+          # 1. Allow Loopback (Localhost)
+          -A INPUT -i lo -j ACCEPT
+          -A OUTPUT -o lo -j ACCEPT
+
+          # 2. Allow Established Connections (Replies)
+          -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+          -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+
+          # 3. Allow DHCP (Getting an IP)
+          -A OUTPUT -p udp --dport 67:68 --sport 67:68 -j ACCEPT
+          -A INPUT -p udp --dport 67:68 --sport 67:68 -j ACCEPT
+
+          # 4. Allow Local Management (RaspAP Dashboard & SSH)
+          -A INPUT -s 10.0.0.0/8 -j ACCEPT
+          -A OUTPUT -d 10.0.0.0/8 -j ACCEPT
+          -A INPUT -s 192.168.0.0/16 -j ACCEPT
+          -A OUTPUT -d 192.168.0.0/16 -j ACCEPT
+
+          # 5. Allow Encrypted VPN Tunnel (The Only Way Out)
+          -A OUTPUT -p udp -d {{ vpn_endpoint }} --dport {{ vpn_port }} -j ACCEPT
+
+          # 6. Allow Traffic INSIDE the Tunnel (wg0)
+          -A INPUT -i wg0 -j ACCEPT
+          -A OUTPUT -o wg0 -j ACCEPT
+          -A FORWARD -i wg0 -j ACCEPT
+          -A FORWARD -o wg0 -j ACCEPT
+          
+          # 7. NAT (Sharing the Internet)
+          COMMIT
+          
+          *nat
+          :PREROUTING ACCEPT [0:0]
+          :INPUT ACCEPT [0:0]
+          :OUTPUT ACCEPT [0:0]
+          :POSTROUTING ACCEPT [0:0]
+          
+          # Masquerade traffic leaving the VPN tunnel
+          -A POSTROUTING -o wg0 -j MASQUERADE
+          COMMIT
+      notify: Reload Firewall
+
+    # --- 3. WIREGUARD SETUP ---
     - name: Install WireGuard
       apt:
         name: wireguard
         state: present
-        update_cache: yes
 
     - name: Generate Private Key (If needed)
       shell: wg genkey
@@ -58,14 +113,14 @@
       register: pub_key
       changed_when: false
 
-    - name: Create WireGuard Config
+    - name: Create WireGuard Config (Simplified)
       template:
         src: templates/wg0.conf.j2
         dest: /etc/wireguard/wg0.conf
         mode: '0600'
       notify: Restart WireGuard
 
-    # --- 3. RASPAP INSTALLATION ---
+    # --- 4. RASPAP INSTALLATION ---
     - name: Check if RaspAP is installed
       stat:
         path: /etc/raspap
@@ -78,6 +133,9 @@
   handlers:
     - name: Apply Sysctl
       command: sysctl -p /etc/sysctl.d/99-hardening.conf
+
+    - name: Reload Firewall
+      command: netfilter-persistent reload
 
     - name: Restart WireGuard
       service:
