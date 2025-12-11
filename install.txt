@@ -1,0 +1,8 @@
+git clone https://github.com/your-repo/secure-gateway.git
+cd secure-gateway
+chmod +x setup.sh
+
+
+Service,Username,Password
+WiFi Network,(SSID: raspi-webgui),ChangeMe
+Web Admin Panel,admin,secret
