@@ -2,11 +2,31 @@
 Address = {{ client_ip }}/24
 PrivateKey = {{ final_private_key }}
 DNS = {{ dns_server }}
-MTU = 1280
+FwMark = 0x55
 
-# NOTE: Firewall rules are now managed by iptables-persistent 
-# located at /etc/iptables/rules.v4. 
-# This file only handles the Routing inside the tunnel.
+# --- FIREWALL RULES ---
+
+# 1. KILL SWITCH (The Sticky Block)
+#    CRITICAL CHANGE: We removed the 'PreDown' line here.
+#    Result: If VPN stops, this rule stays in the firewall.
+#    Since 'wg0' is gone, '! -o wg0' matches EVERYTHING, so EVERYTHING is REJECTED.
+PostUp = iptables -I OUTPUT ! -o %i -m mark ! --mark $(wg show %i fwmark) -m addrtype ! --dst-type LOCAL -j REJECT
+
+# 2. ALLOW DHCP (Fixes "Could not get IP")
+PostUp = iptables -I OUTPUT -p udp --sport 67 --dport 68 -j ACCEPT
+PreDown = iptables -D OUTPUT -p udp --sport 67 --dport 68 -j ACCEPT
+
+# 3. ALLOW LOCAL LAN (Fixes "Browser won't open")
+PostUp = iptables -I OUTPUT -d 192.168.0.0/16 -j ACCEPT
+PostUp = iptables -I OUTPUT -d 10.0.0.0/8 -j ACCEPT
+PostUp = iptables -I OUTPUT -d 172.16.0.0/12 -j ACCEPT
+PreDown = iptables -D OUTPUT -d 192.168.0.0/16 -j ACCEPT
+PreDown = iptables -D OUTPUT -d 10.0.0.0/8 -j ACCEPT
+PreDown = iptables -D OUTPUT -d 172.16.0.0/12 -j ACCEPT
+
+# 4. NAT MASQUERADE
+PostUp = iptables -t nat -A POSTROUTING -o wg0 -j MASQUERADE
+PreDown = iptables -t nat -D POSTROUTING -o wg0 -j MASQUERADE
 
 [Peer]
 PublicKey = {{ vpn_server_pubkey }}
