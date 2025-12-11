@@ -78,46 +78,52 @@
         mode: '0755'
         content: |
           #!/bin/bash
-          # DEFINITIONS (Crucial Fix for Systemd)
           IPT="/usr/sbin/iptables"
           
-          # 1. FLUSH OLD RULES
-          $IPT -P INPUT ACCEPT
-          $IPT -P FORWARD ACCEPT
-          $IPT -P OUTPUT ACCEPT
+          # 1. DEFAULT POLICY: DROP (The Missing "1")
+          # This is the "Universal Kill Switch". If we don't say YES, the answer is NO.
+          $IPT -P INPUT DROP
+          $IPT -P FORWARD DROP
+          $IPT -P OUTPUT DROP
+          
+          # 2. FLUSH OLD RULES
           $IPT -F
           $IPT -X
+          $IPT -t nat -F
+          $IPT -t nat -X
           
-          # 2. ALLOW LOCAL TRAFFIC
+          # 3. UNIVERSAL LOCAL ACCESS (The Interface Fix)
+          # Instead of guessing "wlan0" vs "uap0", we trust the Private IP Standards.
+          # Allow traffic from ANY private LAN IP.
+          $IPT -A INPUT -s 10.0.0.0/8 -j ACCEPT
+          $IPT -A OUTPUT -d 10.0.0.0/8 -j ACCEPT
+          $IPT -A INPUT -s 172.16.0.0/12 -j ACCEPT
+          $IPT -A OUTPUT -d 172.16.0.0/12 -j ACCEPT
+          $IPT -A INPUT -s 192.168.0.0/16 -j ACCEPT
+          $IPT -A OUTPUT -d 192.168.0.0/16 -j ACCEPT
+          
+          # Loopback (Internal Pi communication)
           $IPT -A INPUT -i lo -j ACCEPT
           $IPT -A OUTPUT -o lo -j ACCEPT
-          $IPT -A INPUT -i uap0 -j ACCEPT
-          $IPT -A OUTPUT -o uap0 -j ACCEPT
-          
-          # 3. ALLOW DHCP & LAN
+
+          # 4. ALLOW DHCP (Universal)
           $IPT -A INPUT -p udp --dport 67:68 --sport 67:68 -j ACCEPT
           $IPT -A OUTPUT -p udp --dport 67:68 --sport 67:68 -j ACCEPT
-          $IPT -A OUTPUT -d 192.168.0.0/16 -j ACCEPT
-          $IPT -A OUTPUT -d 10.0.0.0/8 -j ACCEPT
-          $IPT -A OUTPUT -d 172.16.0.0/12 -j ACCEPT
 
-          # 4. ALLOW VPN CONNECTION (The only way out)
-          $IPT -I OUTPUT -d {{ vpn_endpoint }} -p udp --dport {{ vpn_port }} -j ACCEPT
+          # 5. ALLOW VPN TRANSPORT (The Only Way Out)
+          $IPT -A OUTPUT -d {{ vpn_endpoint }} -p udp --dport {{ vpn_port }} -j ACCEPT
           
-          # 5. BLOCK EVERYTHING ELSE (The Kill Switch)
-          $IPT -A OUTPUT -o wlan0 -j REJECT
-          $IPT -A OUTPUT -o eth0 -j REJECT
+          # 6. ALLOW TUNNEL TRAFFIC (Inside the VPN)
+          $IPT -A INPUT -i wg0 -j ACCEPT
+          $IPT -A OUTPUT -o wg0 -j ACCEPT
 
-          # 6. ENABLE FORWARDING (The "Anti-Leak" Update)
-          # A. Allow traffic meant for the VPN Tunnel
-          $IPT -A FORWARD -i uap0 -o wg0 -j ACCEPT
-          $IPT -A FORWARD -i wg0 -o uap0 -j ACCEPT
+          # 7. ENABLE FORWARDING (The Leak Fix)
+          # We only allow forwarding if it goes INTO or OUT OF the VPN tunnel.
+          # Since Policy is DROP (Section 1), any traffic skipping the VPN is killed automatically.
+          $IPT -A FORWARD -i wg0 -j ACCEPT
+          $IPT -A FORWARD -o wg0 -j ACCEPT
 
-          # B. BLOCK EVERYTHING ELSE (The Forwarding Kill Switch)
-          # If traffic from the phone tries to go anywhere else (like eth0 or wlan0), KILL IT.
-          $IPT -A FORWARD -i uap0 -j REJECT
-
-          # C. NAT (Sharing)
+          # 8. NAT
           $IPT -t nat -A POSTROUTING -o wg0 -j MASQUERADE
 
     - name: Create Safety Net Service
