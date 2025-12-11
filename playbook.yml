@@ -1,0 +1,86 @@
+---
+- name: Provision Secure Travel Gateway
+  hosts: localhost
+  connection: local
+  become: yes
+  vars_files:
+    - config.yml
+
+  tasks:
+    # --- 1. SYSTEM HARDENING ---
+    - name: Set Hostname
+      hostname:
+        name: "{{ hostname }}"
+    
+    - name: Disable Bluetooth (Boot Config)
+      lineinfile:
+        path: /boot/firmware/config.txt
+        line: "dtoverlay=disable-bt"
+        create: yes
+
+    - name: Apply Network Hardening (Sysctl)
+      copy:
+        dest: /etc/sysctl.d/99-hardening.conf
+        content: |
+          net.ipv4.ip_forward=1
+          net.ipv4.conf.all.accept_redirects=0
+          net.ipv6.conf.all.disable_ipv6=1
+          net.ipv6.conf.default.disable_ipv6=1
+          net.ipv4.conf.all.log_martians=1
+      notify: Apply Sysctl
+
+    # --- 2. WIREGUARD SETUP ---
+    - name: Install WireGuard
+      apt:
+        name: wireguard
+        state: present
+        update_cache: yes
+
+    - name: Generate Private Key (If needed)
+      shell: wg genkey
+      register: gen_key
+      when: client_private_key | length == 0
+
+    - name: Define Private Key Variable
+      set_fact:
+        final_private_key: "{{ gen_key.stdout if client_private_key | length == 0 else client_private_key }}"
+
+    - name: Display Public Key (For the User)
+      shell: echo "{{ final_private_key }}" | wg pubkey
+      register: pub_key
+      changed_when: false
+
+    - name: Create WireGuard Config
+      template:
+        src: templates/wg0.conf.j2
+        dest: /etc/wireguard/wg0.conf
+        mode: '0600'
+      notify: Restart WireGuard
+
+    # --- 3. RASPAP INSTALLATION ---
+    - name: Check if RaspAP is installed
+      stat:
+        path: /etc/raspap
+      register: raspap_check
+
+    - name: Install RaspAP (Automated)
+      shell: curl -sL https://install.raspap.com | bash -s -- -y
+      when: not raspap_check.stat.exists
+
+  handlers:
+    - name: Apply Sysctl
+      command: sysctl -p /etc/sysctl.d/99-hardening.conf
+
+    - name: Restart WireGuard
+      service:
+        name: wg-quick@wg0
+        state: restarted
+
+  post_tasks:
+    - name: FINAL SUMMARY
+      debug:
+        msg: 
+          - "INSTALLATION COMPLETE"
+          - "Your Device Public Key is: {{ pub_key.stdout }}"
+          - "Add this key to your Home Server or VPN Provider."
+          - "Rebooting device is recommended."
