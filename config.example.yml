@@ -1,0 +1,22 @@
+# --- SERVER CONNECTION ---
+# The Public IP (or Domain) and Port of your VPN Server (Home or Cloud)
+vpn_endpoint: "REPLACE_ME"   # e.g., 203.0.113.5
+vpn_port: "51820"
+
+# The Public Key of the VPN Server (Peer)
+vpn_server_pubkey: "REPLACE_ME"
+
+# --- DEVICE SETTINGS ---
+# The internal IP this device will use inside the VPN
+client_ip: "10.10.10.2"
+
+# DNS Server (1.1.1.1 for Cloudflare, or your Home Pi-hole IP)
+dns_server: "1.1.1.1"
+
+# --- SECURITY ---
+# Leave empty ("") to auto-generate a new keypair. 
+# Paste a key here only if your VPN provider requires a pre-generated one.
+client_private_key: "" 
+
+# Hostname for the device
+hostname: "secure-gateway"
