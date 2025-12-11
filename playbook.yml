@@ -7,7 +7,7 @@
     - config.yml
 
   tasks:
-    # --- 1. SYSTEM CONFIG ---
+    # --- PHASE 1: PREPARATION (Internet Wide Open) ---
     - name: Set Hostname
       hostname:
         name: "{{ hostname }}"
@@ -18,12 +18,6 @@
         regexp: '^127\.0\.1\.1'
         line: "127.0.1.1\t{{ hostname }}"
         state: present
-
-    - name: Disable Bluetooth
-      lineinfile:
-        path: /boot/firmware/config.txt
-        line: "dtoverlay=disable-bt"
-        create: yes
 
     - name: Apply Sysctl Hardening
       copy:
@@ -36,12 +30,30 @@
           net.ipv4.conf.all.log_martians=1
       notify: Apply Sysctl
 
-
-    # --- 2. WIREGUARD SETUP ---
-    - name: Install WireGuard
+    # --- PHASE 2: INSTALLATION (Needs Internet) ---
+    - name: Install Dependencies
       apt:
-        name: wireguard
+        name: 
+          - wireguard
+          - iptables
         state: present
+        update_cache: yes
+
+    - name: Check RaspAP
+      stat:
+        path: /etc/raspap
+      register: raspap_check
+
+    - name: Install RaspAP (Automated)
+      shell: curl -sL https://install.raspap.com | bash -s -- -y
+      when: not raspap_check.stat.exists
+
+    # --- PHASE 3: CONFIGURATION ---
+    - name: Disable Bluetooth
+      lineinfile:
+        path: /boot/firmware/config.txt
+        line: "dtoverlay=disable-bt"
+        create: yes
 
     - name: Generate Private Key
       shell: wg genkey
@@ -52,64 +64,54 @@
       set_fact:
         final_private_key: "{{ gen_key.stdout if client_private_key | length == 0 else client_private_key }}"
 
-    - name: Create WireGuard Config
+    - name: Create WireGuard Config (Clean)
       template:
         src: templates/wg0.conf.j2
         dest: /etc/wireguard/wg0.conf
         mode: '0600'
       notify: Restart WireGuard
 
-    # --- 3. RASPAP SETUP ---
-    - name: Check RaspAP
-      stat:
-        path: /etc/raspap
-      register: raspap_check
-
-    - name: Install RaspAP
-      shell: curl -sL https://install.raspap.com | bash -s -- -y
-      when: not raspap_check.stat.exists
-
-  handlers:
-    - name: Apply Sysctl
-      command: sysctl -p /etc/sysctl.d/99-hardening.conf
-
-    - name: Restart WireGuard
-      service:
-        name: wg-quick@wg0
-        state: restarted
-
-
-    # --- 4. THE SAFETY NET (FIREWALL) ---
-    - name: Install iptables
-      apt:
-        name: iptables
-        state: present
-        update_cache: yes
-
+    # --- PHASE 4: LOCKDOWN (The Safety Net) ---
     - name: Create Safety Net Script (Fixed Paths)
       copy:
         dest: /usr/local/bin/safety-net.sh
         mode: '0755'
         content: |
           #!/bin/bash
+          # DEFINITIONS (Crucial Fix for Systemd)
           IPT="/usr/sbin/iptables"
           
-          # CLEAR OLD RULES
-          $IPT -D OUTPUT -o wlan0 -j REJECT 2>/dev/null
-          $IPT -D OUTPUT -o eth0 -j REJECT 2>/dev/null
+          # 1. FLUSH OLD RULES
+          $IPT -P INPUT ACCEPT
+          $IPT -P FORWARD ACCEPT
+          $IPT -P OUTPUT ACCEPT
+          $IPT -F
+          $IPT -X
           
-          # 1. BLOCK ALL OUTGOING TRAFFIC (Default)
-          $IPT -A OUTPUT -o wlan0 -j REJECT
-          $IPT -A OUTPUT -o eth0 -j REJECT
+          # 2. ALLOW LOCAL TRAFFIC
+          $IPT -A INPUT -i lo -j ACCEPT
+          $IPT -A OUTPUT -o lo -j ACCEPT
+          $IPT -A INPUT -i uap0 -j ACCEPT
+          $IPT -A OUTPUT -o uap0 -j ACCEPT
           
-          # 2. ALLOW VPN CONNECTION (The only way out)
+          # 3. ALLOW DHCP & LAN
+          $IPT -A INPUT -p udp --dport 67:68 --sport 67:68 -j ACCEPT
+          $IPT -A OUTPUT -p udp --dport 67:68 --sport 67:68 -j ACCEPT
+          $IPT -A OUTPUT -d 192.168.0.0/16 -j ACCEPT
+          $IPT -A OUTPUT -d 10.0.0.0/8 -j ACCEPT
+          $IPT -A OUTPUT -d 172.16.0.0/12 -j ACCEPT
+
+          # 4. ALLOW VPN CONNECTION (The only way out)
           $IPT -I OUTPUT -d {{ vpn_endpoint }} -p udp --dport {{ vpn_port }} -j ACCEPT
           
-          # 3. ALLOW DHCP & LAN (So you can connect to it)
-          $IPT -I OUTPUT -p udp --sport 67 --dport 68 -j ACCEPT
-          $IPT -I OUTPUT -d 192.168.0.0/16 -j ACCEPT
-          $IPT -I OUTPUT -d 10.0.0.0/8 -j ACCEPT
-          $IPT -I OUTPUT -d 172.16.0.0/12 -j ACCEPT
+          # 5. BLOCK EVERYTHING ELSE (The Kill Switch)
+          $IPT -A OUTPUT -o wlan0 -j REJECT
+          $IPT -A OUTPUT -o eth0 -j REJECT
+
+          # 6. ENABLE FORWARDING
+          $IPT -A FORWARD -i uap0 -o wg0 -j ACCEPT
+          $IPT -A FORWARD -i wg0 -o uap0 -j ACCEPT
+          $IPT -t nat -A POSTROUTING -o wg0 -j MASQUERADE
 
     - name: Create Safety Net Service
       copy:
@@ -134,7 +136,16 @@
         state: started
         daemon_reload: yes
 
+  handlers:
+    - name: Apply Sysctl
+      command: sysctl -p /etc/sysctl.d/99-hardening.conf
+
+    - name: Restart WireGuard
+      service:
+        name: wg-quick@wg0
+        state: restarted
+
   post_tasks:
     - name: FINAL SUMMARY
       debug:
-        msg: "SETUP COMPLETE. Full paths applied to Safety Net."
+        msg: "SETUP COMPLETE. Internet was kept open for install, then LOCKED."
