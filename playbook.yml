@@ -92,7 +92,12 @@
           $IPT -t nat -F
           $IPT -t nat -X
           
-          # 3. UNIVERSAL LOCAL ACCESS (The Interface Fix)
+          # 3. ALLOW ESTABLISHED CONNECTIONS (Crucial for Return Traffic)
+          $IPT -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+          $IPT -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+          $IPT -A FORWARD -m state --state ESTABLISHED,RELATED -j ACCEPT
+
+          # 4. UNIVERSAL LOCAL ACCESS (The Interface Fix)
           # Instead of guessing "wlan0" vs "uap0", we trust the Private IP Standards.
           # Allow traffic from ANY private LAN IP.
           $IPT -A INPUT -s 10.0.0.0/8 -j ACCEPT
@@ -106,24 +111,24 @@
           $IPT -A INPUT -i lo -j ACCEPT
           $IPT -A OUTPUT -o lo -j ACCEPT
 
-          # 4. ALLOW DHCP (Universal)
+          # 5. ALLOW DHCP (Universal)
           $IPT -A INPUT -p udp --dport 67:68 --sport 67:68 -j ACCEPT
           $IPT -A OUTPUT -p udp --dport 67:68 --sport 67:68 -j ACCEPT
 
-          # 5. ALLOW VPN TRANSPORT (The Only Way Out)
+          # 6. ALLOW VPN TRANSPORT (The Only Way Out)
           $IPT -A OUTPUT -d {{ vpn_endpoint }} -p udp --dport {{ vpn_port }} -j ACCEPT
           
-          # 6. ALLOW TUNNEL TRAFFIC (Inside the VPN)
+          # 7. ALLOW TUNNEL TRAFFIC (Inside the VPN)
           $IPT -A INPUT -i wg0 -j ACCEPT
           $IPT -A OUTPUT -o wg0 -j ACCEPT
 
-          # 7. ENABLE FORWARDING (The Leak Fix)
+          # 8. ENABLE FORWARDING (The Leak Fix)
           # We only allow forwarding if it goes INTO or OUT OF the VPN tunnel.
           # Since Policy is DROP (Section 1), any traffic skipping the VPN is killed automatically.
           $IPT -A FORWARD -i wg0 -j ACCEPT
           $IPT -A FORWARD -o wg0 -j ACCEPT
 
-          # 8. NAT
+          # 9. NAT
           $IPT -t nat -A POSTROUTING -o wg0 -j MASQUERADE
 
     - name: Create Safety Net Service
