@@ -1,0 +1,20 @@
+[Interface]
+Address = {{ client_ip }}/24
+PrivateKey = {{ final_private_key }}
+DNS = {{ dns_server }}
+FwMark = 0x55
+
+# --- KILL SWITCH & ROUTING ---
+# 1. Block Non-VPN Traffic
+PostUp = iptables -I OUTPUT ! -o %i -m mark ! --mark $(wg show %i fwmark) -m addrtype ! --dst-type LOCAL -j REJECT
+PreDown = iptables -D OUTPUT ! -o %i -m mark ! --mark $(wg show %i fwmark) -m addrtype ! --dst-type LOCAL -j REJECT
+
+# 2. NAT Masquerade
+PostUp = iptables -t nat -A POSTROUTING -o wg0 -j MASQUERADE
+PreDown = iptables -t nat -D POSTROUTING -o wg0 -j MASQUERADE
+
+[Peer]
+PublicKey = {{ vpn_server_pubkey }}
+Endpoint = {{ vpn_endpoint }}:{{ vpn_port }}
+AllowedIPs = 0.0.0.0/0
+PersistentKeepalive = 25
