@@ -7,12 +7,12 @@
     - config.yml
 
   tasks:
-    # --- 1. SYSTEM HARDENING ---
+    # --- 1. SYSTEM CONFIG ---
     - name: Set Hostname
       hostname:
         name: "{{ hostname }}"
     
-    - name: Update /etc/hosts for sudo resolution
+    - name: Update /etc/hosts
       lineinfile:
         path: /etc/hosts
         regexp: '^127\.0\.1\.1'
@@ -36,12 +36,42 @@
           net.ipv4.conf.all.log_martians=1
       notify: Apply Sysctl
 
-    # --- 2. WIREGUARD SETUP ---
+    # --- 2. THE SAFETY NET (NEW KILL SWITCH) ---
+    - name: Create Safety Net Script
+      copy:
+        dest: /usr/local/bin/safety-net.sh
+        mode: '0755'
+        content: |
+          #!/bin/bash
+          # CLEAR OLD RULES to prevent duplicates
+          iptables -D OUTPUT -o wlan0 -j REJECT 2>/dev/null
+          
+          # 1. BLOCK ALL OUTGOING TRAFFIC on Physical WiFi (Default)
+          # We add this to the BOTTOM (-A) so exceptions above it work.
+          iptables -A OUTPUT -o wlan0 -j REJECT
+          iptables -A OUTPUT -o eth0 -j REJECT
+          
+          # 2. ALLOW VPN CONNECTION (The only way out)
+          # We Insert (-I) this at the TOP.
+          iptables -I OUTPUT -d {{ vpn_endpoint }} -p udp --dport {{ vpn_port }} -j ACCEPT
+          
+          # 3. ALLOW DHCP & LAN (So you can connect to it)
+          iptables -I OUTPUT -p udp --sport 67 --dport 68 -j ACCEPT
+          iptables -I OUTPUT -d 192.168.0.0/16 -j ACCEPT
+          iptables -I OUTPUT -d 10.0.0.0/8 -j ACCEPT
+          iptables -I OUTPUT -d 172.16.0.0/12 -j ACCEPT
+
+    - name: Enable Safety Net on Boot (via rc.local)
+      lineinfile:
+        path: /etc/rc.local
+        insertbefore: '^exit 0'
+        line: '/usr/local/bin/safety-net.sh'
+
+    # --- 3. WIREGUARD SETUP ---
     - name: Install WireGuard
       apt:
         name: wireguard
         state: present
-        update_cache: yes
 
     - name: Generate Private Key
       shell: wg genkey
@@ -52,14 +82,14 @@
       set_fact:
         final_private_key: "{{ gen_key.stdout if client_private_key | length == 0 else client_private_key }}"
 
-    - name: Create WireGuard Config (The Sticky Version)
+    - name: Create WireGuard Config (Clean)
       template:
         src: templates/wg0.conf.j2
         dest: /etc/wireguard/wg0.conf
         mode: '0600'
       notify: Restart WireGuard
 
-    # --- 3. RASPAP SETUP ---
+    # --- 4. RASPAP SETUP ---
     - name: Check RaspAP
       stat:
         path: /etc/raspap
@@ -68,6 +98,10 @@
     - name: Install RaspAP
       shell: curl -sL https://install.raspap.com | bash -s -- -y
       when: not raspap_check.stat.exists
+    
+    # --- 5. IMMEDIATE LOCKDOWN ---
+    - name: Apply Safety Net Immediately
+      command: /usr/local/bin/safety-net.sh
 
   handlers:
     - name: Apply Sysctl
@@ -81,4 +115,4 @@
   post_tasks:
     - name: FINAL SUMMARY
       debug:
-        msg: "SETUP COMPLETE. Kill Switch is now STICKY."
+        msg: "SETUP COMPLETE. Safety Net Installed."
