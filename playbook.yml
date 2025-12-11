@@ -12,6 +12,14 @@
       hostname:
         name: "{{ hostname }}"
     
+    # [NEW] Fix the "unable to resolve host" error
+    - name: Update /etc/hosts for sudo resolution
+      lineinfile:
+        path: /etc/hosts
+        regexp: '^127\.0\.1\.1'
+        line: "127.0.1.1\t{{ hostname }}"
+        state: present
+
     - name: Disable Bluetooth (Boot Config)
       lineinfile:
         path: /boot/firmware/config.txt
