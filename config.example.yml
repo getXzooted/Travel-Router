@@ -20,3 +20,9 @@ client_private_key: ""
 
 # Hostname for the device
 hostname: "secure-gateway"
+
+# --- NEW ADDITION ---
+# DNS STRATEGY
+# true  = Privacy Mode (Unbound)
+# false = Speed Mode (VPN DNS)
+use_unbound: false
