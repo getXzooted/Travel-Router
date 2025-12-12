@@ -8,6 +8,9 @@ MTU = 1280
 PostUp = iptables -t nat -A POSTROUTING -o wg0 -j MASQUERADE
 PreDown = iptables -t nat -D POSTROUTING -o wg0 -j MASQUERADE
 
+# AUTO-DNS
+PostUp = /usr/local/bin/auto-dns.sh
+
 [Peer]
 PublicKey = {{ vpn_server_pubkey }}
 Endpoint = {{ vpn_endpoint }}:{{ vpn_port }}
