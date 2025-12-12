@@ -64,27 +64,75 @@
       set_fact:
         final_private_key: "{{ gen_key.stdout if client_private_key | length == 0 else client_private_key }}"
 
-    - name: Create Auto-DNS Script (Commercial Grade Fix)
+    - name: Create Auto-DNS Script (VPN DNS Strategy)
+      when: not use_unbound | default(false)   # <--- ONLY RUNS IF UNBOUND IS FALSE
       copy:
         dest: /usr/local/bin/auto-dns.sh
         mode: '0755'
         content: |
           #!/bin/bash
-          # 1. Wait for WireGuard to stabilize
           sleep 2
-          
-          # 2. Get the IP Address of wg0 (e.g. 10.10.10.2)
           WG_IP=$(ip -o -4 addr list wg0 | awk '{print $4}' | cut -d/ -f1)
-          
-          # 3. Calculate the Gateway (Replace last number with .1)
-          # If IP is 10.10.10.2, Gateway becomes 10.10.10.1
           WG_GATEWAY=$(echo $WG_IP | awk -F. '{print $1"."$2"."$3".1"}')
-          
-          # 4. Force RaspAP to use this dynamic Gateway
           echo -e "no-resolv\nserver=$WG_GATEWAY" > /etc/dnsmasq.d/02-vpn-dns.conf
-          
-          # 5. Apply changes
           systemctl restart dnsmasq
+    
+    # --- UNBOUND SETUP (RECURSIVE RESOLVER) ---
+    - name: Install Unbound
+      when: use_unbound | default(false)
+      apt:
+        name: unbound
+        state: present
+
+    - name: Configure Unbound (Pi Zero Optimized)
+      when: use_unbound | default(false)
+      copy:
+        dest: /etc/unbound/unbound.conf.d/pi-zero.conf
+        content: |
+          server:
+            # Listening Info
+            verbosity: 0
+            interface: 127.0.0.1
+            port: 5335
+            do-ip4: yes
+            do-udp: yes
+            do-tcp: yes
+            
+            # Privacy & Security
+            do-ip6: no
+            access-control: 0.0.0.0/0 refuse
+            access-control: 127.0.0.0/8 allow
+            harden-glue: yes
+            harden-dnssec-stripped: yes
+            use-caps-for-id: no
+            edns-buffer-size: 1232
+            prefetch: yes
+            
+            # Pi Zero Resource Limits (Low RAM)
+            num-threads: 1
+            msg-cache-slabs: 2
+            rrset-cache-slabs: 2
+            infra-cache-slabs: 2
+            key-cache-slabs: 2
+            rrset-cache-size: 50m
+            msg-cache-size: 25m
+            so-rcvbuf: 1m
+
+    - name: Point Hotspot to Unbound
+      when: use_unbound | default(false)
+      copy:
+        dest: /etc/dnsmasq.d/02-vpn-dns.conf
+        content: |
+          no-resolv
+          server=127.0.0.1#5335
+      notify: Restart RaspAP
+
+    - name: Restart Unbound
+      when: use_unbound | default(false)
+      service:
+        name: unbound
+        state: restarted
+        enabled: yes
 
     - name: Create WireGuard Config (Clean)
       template:
