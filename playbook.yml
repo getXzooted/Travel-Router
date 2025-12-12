@@ -232,6 +232,11 @@
       service:
         name: wg-quick@wg0
         state: restarted
+    
+    - name: Restart RaspAP
+      service:
+        name: dnsmasq
+        state: restarted
 
   post_tasks:
     - name: FINAL SUMMARY
