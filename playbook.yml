@@ -50,21 +50,25 @@
 
     # --- PHASE 3: CONFIGURATION ---
     - name: Disable Bluetooth
+      tags: config
       lineinfile:
         path: /boot/firmware/config.txt
         line: "dtoverlay=disable-bt"
         create: yes
 
     - name: Generate Private Key
+      tags: config
       shell: wg genkey
       register: gen_key
       when: client_private_key | length == 0
 
     - name: Define Private Key Variable
+      tags: config
       set_fact:
         final_private_key: "{{ gen_key.stdout if client_private_key | length == 0 else client_private_key }}"
 
     - name: Create Auto-DNS Script (VPN DNS Strategy)
+      tags: config
       when: not use_unbound | default(false)   # <--- ONLY RUNS IF UNBOUND IS FALSE
       copy:
         dest: /usr/local/bin/auto-dns.sh
