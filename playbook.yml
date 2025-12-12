@@ -83,12 +83,14 @@
     
     # --- UNBOUND SETUP (RECURSIVE RESOLVER) ---
     - name: Install Unbound
+      tags: config 
       when: use_unbound | default(false)
       apt:
         name: unbound
         state: present
 
     - name: Configure Unbound (Pi Zero Optimized)
+      tags: config 
       when: use_unbound | default(false)
       copy:
         dest: /etc/unbound/unbound.conf.d/pi-zero.conf
@@ -123,6 +125,7 @@
             so-rcvbuf: 1m
 
     - name: Point Hotspot to Unbound
+      tags: config 
       when: use_unbound | default(false)
       copy:
         dest: /etc/dnsmasq.d/02-vpn-dns.conf
@@ -132,6 +135,7 @@
       notify: Restart RaspAP
 
     - name: Restart Unbound
+      tags: config 
       when: use_unbound | default(false)
       service:
         name: unbound
@@ -139,6 +143,7 @@
         enabled: yes
 
     - name: Create WireGuard Config (Clean)
+      tags: config 
       template:
         src: templates/wg0.conf.j2
         dest: /etc/wireguard/wg0.conf
@@ -147,6 +152,7 @@
 
     # --- PHASE 4: LOCKDOWN (The Safety Net) ---
     - name: Create Safety Net Script (Fixed Paths)
+      tags: config
       copy:
         dest: /usr/local/bin/safety-net.sh
         mode: '0755'
@@ -206,6 +212,7 @@
           $IPT -t nat -A POSTROUTING -o wg0 -j MASQUERADE
 
     - name: Create Safety Net Service
+      tags: config
       copy:
         dest: /etc/systemd/system/safety-net.service
         content: |
@@ -222,6 +229,7 @@
           WantedBy=multi-user.target
 
     - name: Enable Safety Net Service
+      tags: config 
       systemd:
         name: safety-net
         enabled: yes
@@ -262,7 +270,8 @@
               if [ -d "$PROJECT_DIR" ]; then
                   cd "$PROJECT_DIR"
                   # Run only specific tags to update settings without full reinstall
-                  sudo -u {{ ansible_user }} ansible-playbook playbook.yml --tags "config,wireguard,unbound,safety-net"
+                  # This runs all tasks tagged 'config' above!
+                  sudo -u {{ ansible_user }} ansible-playbook playbook.yml --tags "config"
               fi
               
               # 4. Blink LED (Success Signal)
@@ -291,28 +300,6 @@
           [Unit]
           Description=Secure Gateway Auto-Provisioning
           After=network.target local-fs.target
-
-          [Service]
-          Type=oneshot
-          ExecStart=/usr/local/bin/provision-check.sh
-          RemainAfterExit=yes
-
-          [Install]
-          WantedBy=multi-user.target
-
-    - name: Enable Auto-Provisioning Service
-      systemd:
-        name: auto-provision
-        enabled: yes
-        daemon_reload: yes
-
-    - name: Create Auto-Provisioning Service Unit
-      copy:
-        dest: /etc/systemd/system/auto-provision.service
-        content: |
-          [Unit]
-          Description=Auto-Provisioning Service
-          After=network.target
 
           [Service]
           Type=oneshot
