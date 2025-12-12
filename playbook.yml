@@ -224,6 +224,106 @@
         state: started
         daemon_reload: yes
 
+    # --- AUTO-PROVISIONING SYSTEM (Drag-and-Drop Keys) ---
+    - name: Create Auto-Provisioning Script
+      copy:
+        dest: /usr/local/bin/provision-check.sh
+        mode: '0755'
+        content: |
+          #!/bin/bash
+          # FILE: /usr/local/bin/provision-check.sh
+          
+          # Detect Boot Partition (Handles Bookworm /boot/firmware vs older /boot)
+          if [ -d "/boot/firmware" ]; then
+              BOOT_DIR="/boot/firmware"
+          else
+              BOOT_DIR="/boot"
+          fi
+          
+          BOOT_CONFIG="$BOOT_DIR/provision.yml"
+          PROJECT_DIR="/home/{{ ansible_user }}/secure-gateway"
+          DEST_CONFIG="$PROJECT_DIR/config.yml"
+          
+          # 1. Check if a new provisioning file exists
+          if [ -f "$BOOT_CONFIG" ]; then
+              echo "New configuration found. Provisioning..."
+              
+              # 2. Move it to the project folder (Overwrite old config)
+              mv "$BOOT_CONFIG" "$DEST_CONFIG"
+              chown {{ ansible_user }}:{{ ansible_user }} "$DEST_CONFIG"
+              chmod 600 "$DEST_CONFIG"
+              
+              # 3. Apply the new Configuration (Fast Run)
+              # We verify the directory exists first to avoid errors
+              if [ -d "$PROJECT_DIR" ]; then
+                  cd "$PROJECT_DIR"
+                  # Run only specific tags to update settings without full reinstall
+                  sudo -u {{ ansible_user }} ansible-playbook playbook.yml --tags "config,wireguard,unbound,safety-net"
+              fi
+              
+              # 4. Blink LED (Success Signal)
+              # Turn off trigger to allow manual control
+              echo none | tee /sys/class/leds/ACT/trigger > /dev/null
+              echo 1 | tee /sys/class/leds/ACT/brightness
+              sleep 0.2
+              echo 0 | tee /sys/class/leds/ACT/brightness
+              sleep 0.2
+              echo 1 | tee /sys/class/leds/ACT/brightness
+              sleep 0.2
+              echo 0 | tee /sys/class/leds/ACT/brightness
+              # Restore default heartbeat
+              echo heartbeat | tee /sys/class/leds/ACT/trigger > /dev/null
+
+              echo "Provisioning Complete. Rebooting..."
+              reboot
+          else
+              echo "No provisioning file found. Booting normally."
+          fi
+
+    - name: Create Auto-Provisioning Service Unit
+      copy:
+        dest: /etc/systemd/system/auto-provision.service
+        content: |
+          [Unit]
+          Description=Secure Gateway Auto-Provisioning
+          After=network.target local-fs.target
+
+          [Service]
+          Type=oneshot
+          ExecStart=/usr/local/bin/provision-check.sh
+          RemainAfterExit=yes
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Enable Auto-Provisioning Service
+      systemd:
+        name: auto-provision
+        enabled: yes
+        daemon_reload: yes
+
+    - name: Create Auto-Provisioning Service Unit
+      copy:
+        dest: /etc/systemd/system/auto-provision.service
+        content: |
+          [Unit]
+          Description=Auto-Provisioning Service
+          After=network.target
+
+          [Service]
+          Type=oneshot
+          ExecStart=/usr/local/bin/provision-check.sh
+          RemainAfterExit=yes
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Enable Auto-Provisioning Service
+      systemd:
+        name: auto-provision
+        enabled: yes
+        daemon_reload: yes
+
   handlers:
     - name: Apply Sysctl
       command: sysctl -p /etc/sysctl.d/99-hardening.conf
