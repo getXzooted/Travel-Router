@@ -64,6 +64,28 @@
       set_fact:
         final_private_key: "{{ gen_key.stdout if client_private_key | length == 0 else client_private_key }}"
 
+    - name: Create Auto-DNS Script (Commercial Grade Fix)
+      copy:
+        dest: /usr/local/bin/auto-dns.sh
+        mode: '0755'
+        content: |
+          #!/bin/bash
+          # 1. Wait for WireGuard to stabilize
+          sleep 2
+          
+          # 2. Get the IP Address of wg0 (e.g. 10.10.10.2)
+          WG_IP=$(ip -o -4 addr list wg0 | awk '{print $4}' | cut -d/ -f1)
+          
+          # 3. Calculate the Gateway (Replace last number with .1)
+          # If IP is 10.10.10.2, Gateway becomes 10.10.10.1
+          WG_GATEWAY=$(echo $WG_IP | awk -F. '{print $1"."$2"."$3".1"}')
+          
+          # 4. Force RaspAP to use this dynamic Gateway
+          echo -e "no-resolv\nserver=$WG_GATEWAY" > /etc/dnsmasq.d/02-vpn-dns.conf
+          
+          # 5. Apply changes
+          systemctl restart dnsmasq
+
     - name: Create WireGuard Config (Clean)
       template:
         src: templates/wg0.conf.j2
