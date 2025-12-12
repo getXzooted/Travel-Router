@@ -8,8 +8,10 @@ MTU = 1280
 PostUp = iptables -t nat -A POSTROUTING -o wg0 -j MASQUERADE
 PreDown = iptables -t nat -D POSTROUTING -o wg0 -j MASQUERADE
 
-# AUTO-DNS
+# AUTO-DNS STRATEGY (Only runs if Unbound is disabled)
+{% if not use_unbound|default(false) %}
 PostUp = /usr/local/bin/auto-dns.sh
+{% endif %}
 
 [Peer]
 PublicKey = {{ vpn_server_pubkey }}
